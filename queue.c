@@ -31,30 +31,30 @@ void enqueue(void* item) {
     new_item->data = item;
     new_item->next = NULL;
 
-    mtx_lock(&threads_queue.lock);
-    if (threads_queue.head != NULL) {
+    mtx_lock(&items_queue.lock);
+    if (atomic_load(&items_queue.size) == 0 && atomic_load(&threads_queue.size) > 0) {
+        mtx_lock(&threads_queue.lock);
         ThreadNode* thrd_to_wake = threads_queue.head; // wake the oldest thread in the queue
         threads_queue.head = threads_queue.head->next;
         if (threads_queue.head == NULL) {
             threads_queue.tail = NULL;
         }
+        atomic_fetch_sub(&threads_queue.size, 1);
+        atomic_fetch_add(&items_queue.visited, 1);
         mtx_unlock(&threads_queue.lock);
         cnd_signal(&items_queue.not_empty);
         free(thrd_to_wake);
-        return;
-    }
-    mtx_unlock(&threads_queue.lock);
-
-    mtx_lock(&items_queue.lock);
-    if (atomic_load(&items_queue.size) == 0) {
-        items_queue.head = new_item;
-        items_queue.tail = new_item;
     } else {
-        items_queue.tail->next = new_item;
-        items_queue.tail = new_item;
+        if (atomic_load(&items_queue.size) == 0) {
+            items_queue.head = new_item;
+            items_queue.tail = new_item;
+        } else {
+            items_queue.tail->next = new_item;
+            items_queue.tail = new_item;
+        }
+        
+        atomic_fetch_add(&items_queue.size, 1);
     }
-    atomic_fetch_add(&items_queue.size, 1);
-    atomic_fetch_add(&items_queue.visited, 1);
     mtx_unlock(&items_queue.lock);
     cnd_broadcast(&items_queue.not_empty);
 }
@@ -87,7 +87,7 @@ void* dequeue(void) {
         items_queue.tail = NULL;
     }
     atomic_fetch_sub(&items_queue.size, 1);
-    atomic_fetch_add(&items_queue.visited, 1);
+    atomic_fetch_add(&items_queue.visited, 1); 
     free(temp);
 
     mtx_unlock(&items_queue.lock);
@@ -108,7 +108,7 @@ bool tryDequeue(void** item) {
         items_queue.tail = NULL;
     }
     atomic_fetch_sub(&items_queue.size, 1);
-    atomic_fetch_add(&items_queue.visited, 1);
+    atomic_fetch_add(&items_queue.visited, 1); // Ensure visited is updated only here
     free(temp);
 
     mtx_unlock(&items_queue.lock);
